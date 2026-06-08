@@ -1,5 +1,6 @@
 """CommuFlow - Flask webhook entry"""
 import json
+from datetime import datetime
 from flask import Flask, request, jsonify
 from agent.graph import run_agent
 from utils.feishu_client import feishu
@@ -7,8 +8,8 @@ from utils.logger import logger
 from utils.task_manager import init_db
 
 app = Flask(__name__)
-
-BOT_NAME = "CommuFlow"
+processed_ids = set()  # dedup
+TODAY = datetime.now().strftime("%Y-%m-%d")
 
 
 @app.route("/", methods=["GET"])
@@ -29,12 +30,23 @@ def feishu_event():
 
     if event_type == "im.message.receive_v1":
         message = event.get("message", {})
+        message_id = message.get("message_id", "")
+
+        # Skip duplicates
+        if message_id in processed_ids:
+            logger.info(f"skip duplicate: {message_id}")
+            return jsonify({"code": 0})
+        processed_ids.add(message_id)
+        if len(processed_ids) > 1000:
+            processed_ids.clear()
+
         if message.get("message_type") == "text":
             raw = json.loads(message.get("content", "{}"))
             text = raw.get("text", "")
 
             # Parse @mentions
             mentions = message.get("mentions", [])
+            logger.info(f"RAW mentions: {json.dumps(mentions, ensure_ascii=False)[:300]}")
             mention_map = {}
             for m in mentions:
                 key = m.get("key", "")
@@ -47,14 +59,10 @@ def feishu_event():
             for key, info in mention_map.items():
                 text = text.replace(key, f"@{info['name']}")
 
-            # Strip bot @mention from text
-            text = text.replace(f"@{BOT_NAME}", "").strip()
-
             sender_id = event.get("sender", {}).get("sender_id", {}).get("open_id", "")
             chat_id = message.get("chat_id", "")
-            message_id = message.get("message_id", "")
 
-            logger.info(f"msg: sender={sender_id}, text={text[:80]}")
+            logger.info(f"msg: sender={sender_id}, text={text[:80]}, mentions={list(mention_map.keys())}")
 
             if text and sender_id:
                 try:
@@ -73,5 +81,5 @@ def feishu_event():
 
 if __name__ == "__main__":
     init_db()
-    logger.info("CommuFlow starting on :5000")
+    logger.info(f"CommuFlow starting on :5000 (today={TODAY})")
     app.run(host="0.0.0.0", port=5000, debug=False)
