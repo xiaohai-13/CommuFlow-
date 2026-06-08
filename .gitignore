@@ -2,13 +2,11 @@ __pycache__/
 *.py[cod]
 *.db
 .env
-venv/
-.venv/
 *.log
-data/*.db
+data/
+vector_store/
 .codex/
 .agents/
 dist/
 build/
 *.egg-info/
-commuflow-venv/

@@ -1,56 +1,71 @@
-﻿# CommuFlow
+# CommuFlow
 
-企业内部沟通畅通化智能体 —— 基于 LangChain + 飞书的"沟通即执行"解决方案。
+> 企业内部沟通畅通化智能体 —— 基于 LangChain + LangGraph + 飞书长连接，"沟通即执行"。
 
 ## 核心能力
 
 把飞书群聊中的碎片化沟通，自动转化为**可执行任务 → 可跟踪状态 → 可沉淀知识**的完整闭环。
 
-| 意图 | 说明 |
-|---|---|
-| 🎯 分配任务 | @责任人 + 时间 → 自动抽取实体 → 创建任务 → 缺信息反问 |
-| ✅ 完成任务 | 回复"T001 已完成" → 更新状态 → 通知验收 → 闭环 |
-| 📊 进度查询 | "我的任务有哪些" → 从 SQLite 查询 → 返回列表 |
-| 📚 知识问答 | 问流程/SOP → 关键词检索 → LLM 生成回答（标注来源） |
-| 📝 会议纪要 | 发送会议记录 → LLM 结构化 → 提取待办 → 一并返回 |
-| ⏰ 定时催办 | 每4小时扫描逾期任务 → 自动 @责任人 |
+| 意图 | 触发方式 | 行为 |
+|------|---------|------|
+| 🎯 分配任务 | "@张三 周五前完成竞品分析" | 实体抽取 → 完整性校验 → 创建任务 → @责任人确认 |
+| ✅ 完成任务 | "T001 已完成 / 验收通过" | 状态流转 → 通知创建者 → 闭环 |
+| 📊 进度查询 | "我的任务有哪些" | 查 SQLite → 返回列表 |
+| 📚 知识问答 | "紧急订单变更流程是什么" | Chroma RAG 检索 → LLM 回答（标注来源） |
+| 📝 会议纪要 | "生成会议纪要" + 会议记录 | LLM 结构化 → 提取待办 → 一并返回 |
+| ⏰ 定时催办 | 每4小时自动扫描 | 逾期任务 @责任人 |
 
 ## 项目结构
 
-`
+```
 CommuFlow/
-├── main.py              # Flask 入口，接收飞书事件
-├── config.py            # 环境变量配置
-├── scheduler.py         # 定时催办（每4小时）
-├── db/                  # SQLite 数据层
-├── feishu/              # 飞书 SDK 封装
-├── bot/                 # 核心业务逻辑
-│   ├── router.py        # 意图路由
-│   ├── llm.py           # LLM 调用
-│   ├── task.py          # 任务处理器
-│   ├── knowledge.py     # 知识问答
-│   └── meeting.py       # 会议纪要
-└── data/                # SQLite 数据库文件
-`
+├── main.py                  # 飞书长连接入口
+├── dashboard.py             # 任务看板
+├── agent/
+│   ├── graph.py             # LangGraph 状态图
+│   ├── nodes.py             # 意图识别/实体抽取/工具调用
+│   ├── tools.py             # 自定义工具（任务/知识库/纪要）
+│   ├── state.py             # Agent 状态定义
+│   └── rag.py               # Chroma RAG 知识库
+├── utils/
+│   ├── feishu_client.py     # 飞书 API 封装
+│   ├── task_manager.py      # SQLite 任务管理
+│   ├── config.py            # 配置加载
+│   └── logger.py            # 日志
+├── knowledge/               # 知识库 Markdown 文档
+├── vector_store/            # Chroma 持久化目录
+├── data/                    # SQLite 数据库
+└── .env                     # 环境变量
+```
 
 ## 快速开始
 
-`powershell
-# 1. 配置环境变量
-copy .env.example .env
-# 编辑 .env，填入飞书 App 凭证和 OpenAI API Key
+```powershell
+# 1. 创建环境
+conda create -n commuflow python=3.11 -y
+conda activate commuflow
 
 # 2. 安装依赖
 pip install -r requirements.txt
 
-# 3. 启动
+# 3. 配置环境变量
+copy .env.example .env
+# 编辑 .env，填入 DeepSeek API Key 和飞书 App 凭证
+
+# 4. 启动长连接（需先创建飞书应用）
 python main.py
-`
+
+# 5. 启动看板（可选）
+python dashboard.py
+```
 
 ## 技术栈
 
-- **消息接入**: 飞书 SDK (lark-oapi)
-- **推理引擎**: OpenAI GPT-4o-mini
-- **数据库**: SQLite
-- **Web 框架**: Flask
-- **定时任务**: APScheduler
+| 层次 | 技术 |
+|------|------|
+| 消息接入 | 飞书 SDK (lark-oapi) 长连接 |
+| 智能编排 | LangGraph 状态图 |
+| 推理引擎 | DeepSeek (OpenAI 兼容) |
+| 向量数据库 | Chroma + bge-small-zh |
+| 业务数据库 | SQLite |
+| 看板 | Flask |

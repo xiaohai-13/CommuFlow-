@@ -1,62 +1,55 @@
-﻿import json
-import hashlib
-from flask import Flask, request, jsonify
-from config import FEISHU_VERIFY_TOKEN, FLASK_HOST, FLASK_PORT
-from db.database import init_db
-from bot.router import route_message
-from feishu.client import feishu
-
-app = Flask(__name__)
-
-
-@app.route("/", methods=["GET"])
-def health():
-    return "CommuFlow is running"
+"""CommuFlow - Feishu long connection entry"""
+import json
+import os
+import time
+from lark_oapi import Client, Config, LOGGER
+from lark_oapi.event.processor import set_event_callback
+from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
+from agent.graph import run_agent
+from utils.feishu_client import feishu
+from utils.config import FEISHU_APP_ID, FEISHU_APP_SECRET
+from utils.logger import logger
+from agent.rag import init_rag
 
 
-@app.route("/feishu/event", methods=["POST"])
-def feishu_event():
-    body = request.get_json(force=True, silent=True) or {}
+def on_message_received(event: P2ImMessageReceiveV1):
+    """Callback when message received"""
+    msg = event.event.message
+    if msg.msg_type != "text":
+        return
 
-    if body.get("type") == "url_verification":
-        token = body.get("token", "")
-        challenge = body.get("challenge", "")
-        if token == FEISHU_VERIFY_TOKEN:
-            return jsonify({"challenge": challenge})
-        return jsonify({"challenge": ""})
+    content = json.loads(msg.content).get("text", "")
+    if not content:
+        return
 
-    header = body.get("header", {})
-    event = body.get("event", {})
-    event_type = header.get("event_type", "")
+    sender = event.event.sender
+    sender_id = sender.sender_id.open_id or ""
+    chat_id = msg.chat_id
 
-    if event_type == "im.message.receive_v1":
-        message = event.get("message", {})
-        msg_type = message.get("message_type", "")
+    logger.info(f"msg from {sender_id} in {chat_id}: {content[:50]}")
 
-        if msg_type == "text":
-            content = json.loads(message.get("content", "{}"))
-            text = content.get("text", "").replace("@_user_1", "").strip()
+    try:
+        reply = run_agent(user_id=sender_id, chat_id=chat_id, text=content)
+        feishu.reply_message(msg.message_id, reply)
+        logger.info(f"reply: {reply[:80]}")
+    except Exception as e:
+        logger.error(f"agent error: {e}")
+        feishu.reply_message(msg.message_id, "系统处理异常，请稍后重试")
 
-            sender = event.get("sender", {})
-            sender_id = sender.get("sender_id", {}).get("open_id", "")
-            sender_name = sender.get("sender_id", {}).get("open_id", "")
 
-            chat_id = message.get("chat_id", "")
-            message_id = message.get("message_id", "")
+set_event_callback(P2ImMessageReceiveV1, on_message_received)
 
-            if text:
-                try:
-                    sender_name = feishu.get_user_info(sender_id).get("name", sender_name)
-                except Exception:
-                    pass
 
-                reply = route_message(text, sender_id, sender_name, chat_id, message_id)
-                feishu.reply_message(message_id, reply)
-
-    return jsonify({"code": 0})
+def main():
+    logger.info("CommuFlow starting...")
+    init_rag()
+    config = Config(FEISHU_APP_ID, FEISHU_APP_SECRET)
+    client = Client(config)
+    logger.info("long connection starting...")
+    client.event.start_loop()
+    while True:
+        time.sleep(1)
 
 
 if __name__ == "__main__":
-    init_db()
-    print(f"CommuFlow starting on {FLASK_HOST}:{FLASK_PORT}")
-    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=False)
+    main()
