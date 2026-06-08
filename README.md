@@ -2,14 +2,14 @@
 
 > 企业内部沟通畅通化智能体 — "沟通即执行"
 
-基于 LangChain + LangGraph + 飞书长连接的智能助手，将群聊中的自然语言指令自动转化为可执行、可跟踪、可验收的任务闭环。
+基于 LangChain + LangGraph + 飞书 Webhook 的智能助手，将群聊中的自然语言指令自动转化为可执行、可跟踪、可验收的任务闭环。
 
 ---
 
 ## 架构
 
 ```
-飞书群聊 @CommuFlow → Flask webhook → 归一化层 → LangGraph 编排
+飞书群聊 @CommuFlow → ngrok → Flask Webhook → 归一化层 → LangGraph 编排
                                            ↓
                         ┌──────────────────┼──────────────────┐
                    TaskAgent         KnowledgeAgent      MeetingAgent
@@ -56,7 +56,7 @@ python -c "from agent.rag import build_knowledge_base; build_knowledge_base()"
 # 终端1
 python main.py
 
-# 终端2（可选，外网穿透）
+# 终端2（必须，飞书 Webhook 需要公网 URL）
 ngrok http 5000
 ```
 
@@ -133,3 +133,4 @@ CommuFlow/
 ## License
 
 MIT
+
