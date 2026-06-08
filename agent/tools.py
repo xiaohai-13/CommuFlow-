@@ -71,7 +71,9 @@ def _find_task(keyword: str, user_openid: str = "") -> dict | None:
     if tid.startswith("T") and tid[1:].isdigit():
         return get_task(int(tid[1:]))
     if keyword:
-        return get_task_by_title(keyword)
+        task = get_task_by_title(keyword)
+        if task:
+            return task
     if user_openid:
         tasks = query_user_tasks(user_openid)
         if tasks:
