@@ -2,7 +2,6 @@ from langgraph.graph import StateGraph, END
 from agent.state import AgentState
 from agent.nodes import intent_node, extract_node, tool_node
 
-
 builder = StateGraph(AgentState)
 builder.add_node("intent", intent_node)
 builder.add_node("extract", extract_node)
@@ -17,7 +16,7 @@ graph = builder.compile()
 
 
 def run_agent(user_id: str, chat_id: str, text: str, mention_map: dict = None) -> str:
-    initial_state = {
+    initial = {
         "user_id": user_id,
         "chat_id": chat_id,
         "messages": [{"role": "user", "content": text}],
@@ -26,5 +25,5 @@ def run_agent(user_id: str, chat_id: str, text: str, mention_map: dict = None) -
         "mention_map": mention_map or {},
         "final_answer": ""
     }
-    final_state = graph.invoke(initial_state)
-    return final_state["final_answer"]
+    result = graph.invoke(initial)
+    return result["final_answer"]
