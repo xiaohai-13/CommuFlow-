@@ -116,12 +116,9 @@ def tool_node(state: AgentState) -> dict:
         mention_map = saved_map
 
     def resolve_assignee(name: str) -> tuple:
-        logger.info(f"resolve_assignee: name={name}, mention_map={mention_map}")
         for key, info_item in mention_map.items():
             if info_item["name"] == name:
-                logger.info(f"resolve_assignee: MATCH {key} -> {info_item}")
                 return info_item["open_id"], info_item["name"]
-        logger.warning(f"resolve_assignee: NO MATCH for {name}")
         return name, name
 
     # ── ASSIGN TASK ──
@@ -167,7 +164,10 @@ def tool_node(state: AgentState) -> dict:
 
     # ── COMPLETE ──
     if intent == "complete":
+        is_verify = "验收" in last_msg
         keyword = last_msg.replace("已完成", "").replace("做完了", "").replace("验收通过", "").replace("需修改", "").strip()
+        if is_verify and not keyword:
+            keyword = "验收"
         result = TOOL_BY_NAME["mark_task_complete"].invoke({"user_openid": user_id, "task_keyword": keyword})
         save_message(chat_id, "assistant", result, intent="complete")
         return {"final_answer": result}
