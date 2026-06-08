@@ -1,7 +1,6 @@
 from typing import List, Dict, Any, TypedDict, Annotated
 import operator
 
-
 class AgentState(TypedDict):
     user_id: str
     chat_id: str
