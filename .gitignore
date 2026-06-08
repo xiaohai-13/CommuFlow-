@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.py[cod]
 *.db
 .env
@@ -11,3 +11,4 @@ data/*.db
 dist/
 build/
 *.egg-info/
+commuflow-venv/

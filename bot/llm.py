@@ -1,4 +1,5 @@
-﻿import json
+
+import json
 import re
 from openai import OpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL, LLM_MODEL
@@ -12,7 +13,7 @@ def classify_intent(text: str) -> dict:
 用户消息：{text}
 
 意图类型（选一）：
-- assign_task: 分配任务、安排工作（关键词：@"某人"、完成、负责、跟进、交给你）
+- assign_task: 分配任务、安排工作（关键词：@某人、完成、负责、跟进、交给你）
 - ask_knowledge: 知识问答（关键词：流程、规定、怎么做、SOP、制度）
 - meeting_minutes: 会议纪要（含"会议记录、纪要、转录"等词的长文本）
 - query_progress: 进度查询（关键词：我的任务、未完成、进度、有哪些任务）
@@ -35,18 +36,11 @@ def classify_intent(text: str) -> dict:
 
 
 def extract_task_entities(text: str) -> dict:
-    prompt = f"""从以下用户消息中提取任务信息。如果某字段不存在，值为空字符串。
+    prompt = f"""从以下用户消息中提取任务信息。如果某字段不存在值用空字符串。直接返回纯JSON，不要markdown代码块。
 
 用户消息：{text}
 
-返回JSON：
-{{
-    "title": "简短任务标题",
-    "assignee": "责任人姓名（不含@符号）",
-    "due_date": "截止时间，格式YYYY-MM-DD或YYYY-MM-DD HH:MM",
-    "description": "任务详细描述",
-    "dependency": "依赖关系描述"
-}}"""
+返回示例：{{"title":"简短任务标题","assignee":"责任人姓名","due_date":"2026-06-15","description":"详细描述","dependency":"依赖关系"}}"""
 
     try:
         resp = client.chat.completions.create(
@@ -56,14 +50,21 @@ def extract_task_entities(text: str) -> dict:
             max_tokens=300
         )
         content = resp.choices[0].message.content.strip()
-        content = re.sub(r'^`(?:json)?\s*|\s*`$', '', content)
+        if not content:
+            return {"title": "", "assignee": "", "due_date": "", "description": "", "dependency": ""}
+        content = re.sub(r"```(?:json)?\s*|\s*```", "", content).strip()
+        start = content.find("{")
+        end = content.rfind("}")
+        if start >= 0 and end > start:
+            content = content[start:end+1]
         return json.loads(content)
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG entity extract error] {e}", flush=True)
         return {"title": "", "assignee": "", "due_date": "", "description": "", "dependency": ""}
 
 
 def parse_complete_intent(text: str) -> str | None:
-    match = re.search(r'T\d{3}', text.upper())
+    match = re.search(r"T\d{3}", text.upper())
     if match:
         return match.group()
     return None
@@ -94,8 +95,8 @@ def generate_knowledge_answer(question: str, contexts: list[str]) -> str:
 要求：
 1. 基于知识库内容回答，不要编造
 2. 标注信息来源（如"根据《XX》第X条"）
-3. 如果知识库没有答案，说"未找到相关知识""""
-
+3. 如果知识库没有答案，说"未找到相关知识"
+"""
     return ask_llm(prompt)
 
 
@@ -133,7 +134,8 @@ def extract_todos_from_minutes(minutes_text: str) -> list[dict]:
             max_tokens=500
         )
         content = resp.choices[0].message.content.strip()
-        content = re.sub(r'^`(?:json)?\s*|\s*`$', '', content)
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
         return json.loads(content)
     except Exception:
         return []
+
