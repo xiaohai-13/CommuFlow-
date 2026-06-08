@@ -19,7 +19,7 @@ SYSTEM_PROMPT = """你是 CommuFlow，企业内部任务管理智能体。严格
 
 【用户】用户ID: {user_id}"""
 
-FALLBACK_REPLY = "我是 CommuFlow 任务助手。可以帮你：\n- 分配任务：请@张三 周五前完成竞品分析\n- 查进度：我的任务有哪些\n- 完成任务：竞品分析 已完成\n- 问流程：紧急订单变更流程是什么"
+FALLBACK_REPLY = "我是 CommuFlow 任务助手。可以帮你：\n- 分配任务：请@张三 周五前完成竞品分析\n- 查进度：我的任务有哪些\n- 完成任务：T003 已完成\n- 验收：T003 验收通过\n- 问流程：紧急订单变更流程是什么"
 
 llm = ChatOpenAI(model=LLM_MODEL, api_key=LLM_API_KEY, base_url=LLM_BASE_URL, temperature=0)
 
@@ -122,7 +122,7 @@ def tool_node(state: AgentState) -> dict:
                 return info_item["open_id"], info_item["name"]
         return name, name
 
-    # ── ASSIGN ──
+    # ═══════ ASSIGN TASK ═══════
     if intent in ("assign", "assign_followup"):
         title = info.get("title", "")
         assignee = info.get("assignee", "")
@@ -139,11 +139,15 @@ def tool_node(state: AgentState) -> dict:
             return {"final_answer": "请明确截止时间，例如：2026-06-15 或 下周五18:00。"}
 
         open_id, real_name = resolve_assignee(assignee)
-        TOOL_BY_NAME["create_task"].invoke({"title": title, "assignee_openid": open_id, "due_date": due_date, "description": description or ""})
+        task_id = TOOL_BY_NAME["create_task"].invoke({
+            "title": title, "assignee_openid": open_id, "creator_openid": user_id,
+            "due_date": due_date, "description": description or ""
+        })
+        tid = f"T{str(task_id).zfill(3)}"
         save_message(chat_id, "assistant", "", intent="assign")
-        return {"final_answer": f"任务「{title}」已创建\n责任人：{real_name}\n截止时间：{due_date}\n\n完成后请回复「{title} 已完成」"}
+        return {"final_answer": f"{tid} 任务「{title}」已创建\n责任人：{real_name}\n截止时间：{due_date}\n\n完成后请回复「{tid} 已完成」"}
 
-    # ── KNOWLEDGE ──
+    # ═══════ KNOWLEDGE ═══════
     if intent == "knowledge":
         docs = retrieve_context(last_msg)
         if not docs:
@@ -154,29 +158,40 @@ def tool_node(state: AgentState) -> dict:
         save_message(chat_id, "assistant", answer, intent="knowledge")
         return {"final_answer": answer}
 
-    # ── QUERY ──
+    # ═══════ QUERY ═══════
     if intent == "query":
         result = TOOL_BY_NAME["query_my_tasks"].invoke({"user_openid": user_id})
         save_message(chat_id, "assistant", result, intent="query")
         return {"final_answer": result}
 
-    # ── COMPLETE ──
+    # ═══════ COMPLETE ═══════
     if intent == "complete":
         is_verify = "验收" in last_msg
         keyword = last_msg.replace("已完成", "").replace("做完了", "").replace("验收通过", "").replace("需修改", "").strip()
-        if is_verify and not keyword:
-            keyword = "验收"
-        result = TOOL_BY_NAME["mark_task_complete"].invoke({"user_openid": user_id, "task_keyword": keyword})
-        save_message(chat_id, "assistant", result, intent="complete")
-        return {"final_answer": result}
+        # Extract T003 style ID
+        import re
+        tid_match = re.search(r'T\d{3}', last_msg.upper())
+        if tid_match:
+            keyword = tid_match.group()
 
-    # ── MEETING ──
+        if is_verify:
+            task_id = TOOL_BY_NAME["verify_task"].invoke({"user_openid": user_id, "task_id_or_title": keyword})
+            return {"final_answer": f"{task_id} 验收通过，任务已闭环。"}
+        else:
+            task_id = TOOL_BY_NAME["complete_task"].invoke({"user_openid": user_id, "task_id_or_title": keyword})
+            # Get task title for confirmation
+            from utils.task_manager import get_task
+            task = get_task(int(str(task_id)[1:]))
+            title = task["title"] if task else ""
+            return {"final_answer": f"{task_id}「{title}」已标记待验收。\n请创建者回复「{task_id} 验收通过」确认。"}
+
+    # ═══════ MEETING ═══════
     if intent == "meeting":
         prompt = SYSTEM_PROMPT.format(user_id=user_id) + f"\n整理会议纪要：\n{last_msg}"
         result = llm.invoke(prompt).content
         save_message(chat_id, "assistant", result, intent="meeting")
         return {"final_answer": result}
 
-    # ── FALLBACK ──
+    # ═══════ FALLBACK ═══════
     save_message(chat_id, "assistant", FALLBACK_REPLY, intent="chat")
     return {"final_answer": FALLBACK_REPLY}
