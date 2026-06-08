@@ -164,7 +164,6 @@ def tool_node(state: AgentState) -> dict:
         if tid_match:
             tid_num = int(keyword[1:])
             task = get_task(tid_num)
-            logger.info(f"complete: T{tid_num} status={task['status'] if task else 'NOT_FOUND'}")
             if task and task["status"] == "verified":
                 is_verify = True
 
