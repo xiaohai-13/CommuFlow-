@@ -92,6 +92,36 @@ def _dedup(message_id: str) -> bool:
 def health():
     return "CommuFlow is running"
 
+@app.route("/dashboard")
+def dashboard():
+    """Task dashboard"""
+    from utils.task_manager import get_all_tasks
+    tasks = get_all_tasks()
+    rows = ""
+    for t in tasks:
+        st = t["status"]
+        color = {"pending": "#f5a623", "verified": "#7b68ee", "completed": "#7ed321", "in_progress": "#4a90d9"}.get(st, "#999")
+        rows += f"""<tr>
+            <td>T{t["id"]:03d}</td>
+            <td>{t["title"]}</td>
+            <td>{t.get("assignee_name") or t.get("assignee_openid", "")[:12]}</td>
+            <td>{t.get("due_date", "")}</td>
+            <td style="color:{color};font-weight:bold">{st}</td>
+        </tr>"""
+    return f"""<!DOCTYPE html>
+<html><head><title>CommuFlow Task Board</title>
+<meta charset="utf-8">
+<style>
+body{{font-family:Arial;margin:20px;background:#f5f5f5}}
+h1{{color:#333}}table{{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.1)}}
+th,td{{border:1px solid #ddd;padding:10px;text-align:left}}
+th{{background:#4a90d9;color:#fff}}tr:hover{{background:#f0f0f0}}
+</style></head><body>
+<h1>CommuFlow Task Board</h1>
+<table><tr><th>ID</th><th>Title</th><th>Assignee</th><th>Due Date</th><th>Status</th></tr>
+{rows}
+</table><p style="color:#999;margin-top:10px">Total: {len(tasks)} tasks | <a href="/">Health</a></p>
+</body></html>"""
 
 @app.route("/feishu/event", methods=["POST"])
 def feishu_event():
