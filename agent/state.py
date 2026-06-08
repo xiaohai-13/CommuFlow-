@@ -8,5 +8,5 @@ class AgentState(TypedDict):
     messages: Annotated[List[Dict[str, str]], operator.add]
     intent: str
     extracted_info: Dict[str, Any]
-    tool_calls: List[Dict]
+    mention_map: Dict[str, Any]
     final_answer: str

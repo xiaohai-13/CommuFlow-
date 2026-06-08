@@ -16,13 +16,14 @@ builder.add_edge("tool_call", END)
 graph = builder.compile()
 
 
-def run_agent(user_id: str, chat_id: str, text: str) -> str:
+def run_agent(user_id: str, chat_id: str, text: str, mention_map: dict = None) -> str:
     initial_state = {
         "user_id": user_id,
         "chat_id": chat_id,
         "messages": [{"role": "user", "content": text}],
         "intent": "",
         "extracted_info": {},
+        "mention_map": mention_map or {},
         "final_answer": ""
     }
     final_state = graph.invoke(initial_state)

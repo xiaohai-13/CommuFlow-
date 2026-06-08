@@ -26,12 +26,15 @@ def build_knowledge_base():
 
 def init_rag():
     global vectordb
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    if os.path.exists(VECTOR_STORE_PATH) and os.listdir(VECTOR_STORE_PATH):
-        vectordb = Chroma(persist_directory=VECTOR_STORE_PATH, embedding_function=embeddings)
-        logger.info("vector store loaded from disk")
-    else:
-        build_knowledge_base()
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        if os.path.exists(VECTOR_STORE_PATH) and os.listdir(VECTOR_STORE_PATH):
+            vectordb = Chroma(persist_directory=VECTOR_STORE_PATH, embedding_function=embeddings)
+            logger.info("vector store loaded from disk")
+        else:
+            build_knowledge_base()
+    except Exception as e:
+        logger.warning(f"RAG init failed (knowledge Q&A disabled): {e}")
 
 
 def retrieve_context(query: str, k: int = 3) -> list:
