@@ -8,7 +8,7 @@ from utils.logger import logger
 from utils.task_manager import init_db
 
 app = Flask(__name__)
-processed_ids = set()  # dedup
+processed_ids = set()
 TODAY = datetime.now().strftime("%Y-%m-%d")
 
 
@@ -29,40 +29,39 @@ def feishu_event():
     event_type = header.get("event_type", "")
 
     if event_type == "im.message.receive_v1":
-        message = event.get("message", {})
-        message_id = message.get("message_id", "")
+        # v1 event: message fields are directly under event
+        # v2 compat: try event.message first, fallback to event
+        message = event.get("message", event)
 
-        # Skip duplicates
+        message_id = message.get("message_id", "")
         if message_id in processed_ids:
-            logger.info(f"skip duplicate: {message_id}")
             return jsonify({"code": 0})
         processed_ids.add(message_id)
         if len(processed_ids) > 1000:
             processed_ids.clear()
 
-        if message.get("message_type") == "text":
+        if message.get("message_type") == "text" or message.get("msg_type") == "text":
             raw = json.loads(message.get("content", "{}"))
             text = raw.get("text", "")
 
-            # Parse @mentions
-            mentions = message.get("mentions", [])
-            logger.info(f"RAW mentions: {json.dumps(mentions, ensure_ascii=False)[:300]}")
+            # Parse mentions: try message.mentions first (v2), then event.mentions (v1)
+            mentions = message.get("mentions") or event.get("mentions") or []
             mention_map = {}
             for m in mentions:
                 key = m.get("key", "")
                 name = m.get("name", "")
-                open_id = m.get("id", {}).get("open_id", "")
+                mid = m.get("id") or {}
+                open_id = mid.get("open_id", "")
                 if key and name:
                     mention_map[key] = {"name": name, "open_id": open_id}
 
-            # Replace @_user_X with @name
             for key, info in mention_map.items():
                 text = text.replace(key, f"@{info['name']}")
 
             sender_id = event.get("sender", {}).get("sender_id", {}).get("open_id", "")
             chat_id = message.get("chat_id", "")
 
-            logger.info(f"msg: sender={sender_id}, text={text[:80]}, mentions={list(mention_map.keys())}")
+            logger.info(f"msg: sender={sender_id}, text={text[:80]}, mention_count={len(mention_map)}")
 
             if text and sender_id:
                 try:
