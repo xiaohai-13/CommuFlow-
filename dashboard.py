@@ -26,7 +26,7 @@ tr:hover{background:#f0f0f0}
 <tr><th>ID</th><th>Title</th><th>Assignee</th><th>Due Date</th><th>Status</th></tr>
 {% for t in tasks %}
 <tr>
-<td>T{{ '%03d' % t.id }}</td>
+<td>T{{ t.id }}</td>
 <td>{{ t.title }}</td>
 <td>{{ t.assignee_name or t.assignee_openid[:12] }}</td>
 <td>{{ t.due_date }}</td>

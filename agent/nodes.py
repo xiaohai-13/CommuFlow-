@@ -85,7 +85,7 @@ def tool_node(state: AgentState) -> dict:
             return {"final_answer": "你没有未完成的任务。"}
         lines = ["你的未完成任务："]
         for t in tasks[:10]:
-            lines.append(f"  [{t['status']}] T{t['id']:03d} {t['title']} 截止:{t.get('due_date','')}")
+            lines.append(f"  [{t['status']}] T{str(t['id']).zfill(3)} {t['title']} 截止:{t.get('due_date','')}")
         return {"final_answer": "\n".join(lines)}
 
     elif intent == "meeting":
@@ -110,7 +110,7 @@ def tool_node(state: AgentState) -> dict:
         task = get_task_by_title(last_msg.replace("已完成", "").replace("做完了", "").strip())
         if task:
             update_task_status(task["id"], "completed")
-            return {"final_answer": f"任务 T{task['id']:03d}「{task['title']}」已标记完成。"}
+            return {"final_answer": f"任务 T{str(task['id']).zfill(3)}「{task['title']}」已标记完成。"}
         return {"final_answer": "未识别任务ID，请提供任务标题或编号"}
 
     else:
