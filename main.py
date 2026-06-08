@@ -29,51 +29,62 @@ def feishu_event():
     event_type = header.get("event_type", "")
 
     if event_type == "im.message.receive_v1":
-        # v1 event: message fields are directly under event
-        # v2 compat: try event.message first, fallback to event
+        # v1 event: message fields directly under event
         message = event.get("message", event)
-
         message_id = message.get("message_id", "")
+
         if message_id in processed_ids:
             return jsonify({"code": 0})
         processed_ids.add(message_id)
         if len(processed_ids) > 1000:
             processed_ids.clear()
 
-        if message.get("message_type") == "text" or message.get("msg_type") == "text":
-            raw = json.loads(message.get("content", "{}"))
-            text = raw.get("text", "")
+        msg_type = message.get("msg_type") or message.get("message_type", "")
+        if msg_type != "text":
+            return jsonify({"code": 0})
 
-            # Parse mentions: try message.mentions first (v2), then event.mentions (v1)
-            mentions = message.get("mentions") or event.get("mentions") or []
-            mention_map = {}
-            for m in mentions:
-                key = m.get("key", "")
-                name = m.get("name", "")
-                mid = m.get("id") or {}
-                open_id = mid.get("open_id", "")
-                if key and name:
-                    mention_map[key] = {"name": name, "open_id": open_id}
+        # content might be in body.content (REST API) or directly in content (event)
+        raw_content = ""
+        body_node = message.get("body", {})
+        raw_content = body_node.get("content") or message.get("content", "{}")
+        try:
+            parsed = json.loads(raw_content)
+            text = parsed.get("text", "")
+        except:
+            text = ""
 
-            for key, info in mention_map.items():
-                text = text.replace(key, f"@{info['name']}")
+        # mentions: id is a STRING (open_id), not a nested object
+        mentions = message.get("mentions", [])
+        mention_map = {}
+        for m in mentions:
+            key = m.get("key", "")
+            name = m.get("name", "")
+            open_id = m.get("id", "")  # directly a string per API docs
+            if key and name:
+                mention_map[key] = {"name": name, "open_id": open_id}
 
-            sender_id = event.get("sender", {}).get("sender_id", {}).get("open_id", "")
-            chat_id = message.get("chat_id", "")
+        for key, info in mention_map.items():
+            text = text.replace(key, f"@{info['name']}")
 
-            logger.info(f"msg: sender={sender_id}, text={text[:80]}, mention_count={len(mention_map)}")
+        sender = event.get("sender", {})
+        sender_obj = sender.get("sender_id", sender)
+        sender_id = sender_obj.get("open_id", "") or sender.get("id", "")
 
-            if text and sender_id:
-                try:
-                    reply = run_agent(
-                        user_id=sender_id, chat_id=chat_id,
-                        text=text, mention_map=mention_map
-                    )
-                    feishu.reply_message(message_id, reply)
-                    logger.info(f"reply: {reply[:80]}")
-                except Exception as e:
-                    logger.error(f"error: {e}")
-                    feishu.reply_message(message_id, "系统异常，请稍后重试")
+        chat_id = message.get("chat_id", "")
+
+        logger.info(f"msg: sender={sender_id}, text={text[:80]}, mentions={len(mention_map)}")
+
+        if text and sender_id:
+            try:
+                reply = run_agent(
+                    user_id=sender_id, chat_id=chat_id,
+                    text=text, mention_map=mention_map
+                )
+                feishu.reply_message(message_id, reply)
+                logger.info(f"reply: {reply[:80]}")
+            except Exception as e:
+                logger.error(f"error: {e}")
+                feishu.reply_message(message_id, "系统异常，请稍后重试")
 
     return jsonify({"code": 0})
 
