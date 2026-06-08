@@ -51,8 +51,12 @@ def _resolve_assignee(name: str, mention_map: dict) -> str:
     if not name or not mention_map:
         return ""
     for info in mention_map.values():
-        if info["name"] == name:
-            return info["open_id"]
+        if info.get("name") == name:
+            oid = info.get("open_id", "")
+            # Safety: if open_id is nested dict, extract the string
+            if isinstance(oid, dict):
+                oid = oid.get("open_id", "")
+            return str(oid) if oid else ""
     return ""
 
 
