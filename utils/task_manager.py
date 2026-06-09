@@ -30,6 +30,26 @@ def init_db():
             source_msg TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        CREATE TABLE IF NOT EXISTS roles (
+            openid TEXT NOT NULL,
+            role TEXT NOT NULL,
+            scope TEXT DEFAULT 'global',
+            chat_id TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(openid, role, scope, chat_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS task_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER,
+            actor_openid TEXT DEFAULT '',
+            action TEXT NOT NULL,
+            old_status TEXT DEFAULT '',
+            new_status TEXT DEFAULT '',
+            payload_json TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
     conn.commit()
     conn.close()
@@ -69,6 +89,44 @@ def update_task_status(task_id: int, status: str) -> None:
         conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, task_id))
     conn.commit()
     conn.close()
+
+
+def add_task_event(task_id: int, actor_openid: str, action: str,
+                   old_status: str = "", new_status: str = "",
+                   payload_json: str = "{}") -> None:
+    conn = get_conn()
+    conn.execute(
+        """INSERT INTO task_events
+           (task_id, actor_openid, action, old_status, new_status, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (task_id, actor_openid, action, old_status, new_status, payload_json)
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_role(openid: str, role: str, scope: str = "global", chat_id: str = "") -> None:
+    conn = get_conn()
+    conn.execute(
+        """INSERT OR IGNORE INTO roles (openid, role, scope, chat_id)
+           VALUES (?, ?, ?, ?)""",
+        (openid, role, scope, chat_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_roles(openid: str, chat_id: str = "") -> list[str]:
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT role FROM roles
+           WHERE openid = ?
+             AND (scope = 'global' OR chat_id = ?)
+           ORDER BY role""",
+        (openid, chat_id)
+    ).fetchall()
+    conn.close()
+    return [r["role"] for r in rows]
 
 
 def query_user_tasks(openid: str, status_filter: str = "") -> list[dict]:

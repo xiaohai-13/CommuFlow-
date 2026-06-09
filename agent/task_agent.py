@@ -4,20 +4,21 @@ from datetime import datetime, date, timedelta
 from langchain_openai import ChatOpenAI
 from utils.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from agent.schemas import TaskAction, ActionPlan
-from agent.tools import create_task, complete_task, verify_task, query_my_tasks
+from agent.tools import create_task, complete_task, verify_task, query_my_tasks, get_task_detail
 from agent.memory import save_message
 
 llm = ChatOpenAI(model=LLM_MODEL, api_key=LLM_API_KEY, base_url=LLM_BASE_URL, temperature=0)
 
 # NOTE: braces are literal JSON, NOT format placeholders. Use .replace() not .format()!
 EXTRACT_PROMPT = """你是任务助手。分析消息，输出JSON:
-{"steps":[{"action":"create|complete|verify|query|clarify|chat","task_title":"","task_id":"","assignee_name":"","due_date":""}]}
+{"steps":[{"action":"create|complete|verify|query|detail|clarify|chat","task_title":"","task_id":"","assignee_name":"","due_date":""}]}
 
 规则:
 - "请@某人 XX前完成YY" -> action=create, task_title=YY, assignee_name=某人, due_date=XX(日期)
 - "XXX已完成"/"T00X已完成" -> action=complete, task_title/task_id=任务名或编号
 - "验收通过"/"T00X验收通过" -> action=verify, task_id=编号或""
 - "我的任务"/"进度查询" -> action=query
+- "T00X任务是什么"/"T00X现在怎么样"/"某任务状态是什么" -> action=detail, task_id/task_title=编号或任务名
 - 闲聊 -> action=chat
 - 信息不全 -> action=clarify
 
@@ -89,6 +90,9 @@ def _execute_step(step: TaskAction, user_id: str, mention_map: dict) -> str:
             "title": task_ref, "assignee_openid": assignee_openid,
             "creator_openid": user_id, "due_date": due_date,
         })
+        if "UNAUTHORIZED" in str(r):
+            data = json.loads(r)
+            return f"[FAIL] {data['reason']}"
         data = json.loads(r) if isinstance(r, str) else r
         return (
             f"[OK] 任务「{task_ref}」已创建\n"
@@ -100,6 +104,9 @@ def _execute_step(step: TaskAction, user_id: str, mention_map: dict) -> str:
         r = complete_task.invoke({"user_openid": user_id, "task_id_or_title": task_ref})
         if "NOT_FOUND" in str(r):
             return f"[FAIL] 未找到任务「{task_ref}」，请提供标题或编号。"
+        if "UNAUTHORIZED" in str(r):
+            data = json.loads(r)
+            return f"[FAIL] {data['reason']}"
         data = json.loads(r) if isinstance(r, str) else r
         return f"[OK] T{data['id']} {data['title']} 已标记待验收。创建者回复「T{data['id']} 验收通过」确认。"
 
@@ -107,10 +114,43 @@ def _execute_step(step: TaskAction, user_id: str, mention_map: dict) -> str:
         r = verify_task.invoke({"user_openid": user_id, "task_id_or_title": task_ref})
         if "NOT_FOUND" in str(r):
             return "[FAIL] 未找到待验收任务。"
+        if "UNAUTHORIZED" in str(r):
+            data = json.loads(r)
+            return f"[FAIL] {data['reason']}"
+        if "AMBIGUOUS" in str(r):
+            data = json.loads(r)
+            lines = ["请确认要验收哪一个任务："]
+            for item in data.get("candidates", []):
+                lines.append(f"  T{item['id']} {item['title']}")
+            return "\n".join(lines)
         if "NOT_VERIFIED" in str(r):
             return "[FAIL] 该任务尚未标记完成。先让责任人回复完成任务。"
         data = json.loads(r) if isinstance(r, str) else r
         return f"[OK] T{data['id']} {data['title']} 验收通过！闭环完成。"
+
+    elif action == "detail":
+        if not task_ref:
+            return "请提供任务编号或标题，例如：T001 任务是什么。"
+        r = get_task_detail.invoke({"user_openid": user_id, "task_id_or_title": task_ref})
+        if "NOT_FOUND" in str(r):
+            return f"[FAIL] 未找到任务「{task_ref}」。"
+        if "AMBIGUOUS" in str(r):
+            data = json.loads(r)
+            lines = ["匹配到多个任务，请指定任务编号："]
+            for item in data.get("candidates", []):
+                lines.append(f"  T{item['id']} [{item['status']}] {item['title']} 截止:{item['due_date']}")
+            return "\n".join(lines)
+        if "UNAUTHORIZED" in str(r):
+            data = json.loads(r)
+            return f"[FAIL] {data['reason']}"
+        data = json.loads(r) if isinstance(r, str) else r
+        return (
+            f"T{data['id']} {data['title']}\n"
+            f"状态: {data['status']}\n"
+            f"责任人: {data['assignee_openid']}\n"
+            f"创建者: {data['creator_openid']}\n"
+            f"截止时间: {data['due_date']}"
+        )
 
     elif action == "query":
         r = query_my_tasks.invoke({"user_openid": user_id})

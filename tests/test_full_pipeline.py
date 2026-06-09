@@ -1,212 +1,260 @@
-﻿"""
-================================================================================
-  CommuFlow 全流程综合测试
-  模拟飞书消息 JSON 格式 → 走完整 LangGraph pipeline
-  覆盖：单人/双人/多人编排 + 知识库 + 会议纪要 + 看板
-================================================================================
-用法: python tests/test_full_pipeline.py
 """
-import sys, io, json, re
+CommuFlow full pipeline acceptance test.
+
+This script is intentionally verbose. It prints:
+- who sent the Feishu-like message,
+- what the original message looked like,
+- what the expected behavior is,
+- what CommuFlow replied,
+- and the task-board state after important steps.
+
+Usage:
+    python tests/test_full_pipeline.py
+"""
+import io
+import json
+import re
+import sqlite3
+import sys
+
 sys.path.insert(0, ".")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 from agent.graph import run_agent
-from agent.memory import clear_history, load_history
-from utils.task_manager import init_db, get_all_tasks
-from utils.logger import logger
+from agent.memory import clear_history
+from agent.tools import create_task
+from utils.task_manager import DB_PATH, add_role, get_all_tasks, get_task, init_db
 
-init_db()
 
-# ═══════════════════════════════════════════════════
-# 模拟用户身份（对应飞书 open_id）
-# ═══════════════════════════════════════════════════
-小海 = "ou_xiaohai"        # 项目经理
-张三 = "ou_zhangsan"       # 开发
-李四 = "ou_lisi"           # 设计
-王五 = "ou_wangwu"         # 测试
+CHAT = "oc_test_full_pipeline"
+BOT_NAME = "CommuFlow"
+BOT_OPENID = "ou_commuflow_bot"
+USERS = {
+    "小海": "ou_xiaohai",
+    "张三": "ou_zhangsan",
+    "李四": "ou_lisi",
+    "王五": "ou_wangwu",
+    "路人": "ou_other",
+}
 
-# 飞书 mentions 格式（模拟真实事件中的 JSON）
-def make_mentions(*users):
-    """构造飞书 mentions 列表。users: [(name, open_id), ...]"""
-    result = {}
-    for i, (name, oid) in enumerate(users, 1):
-        key = f"@_user_{i}"
-        result[key] = {"name": name, "open_id": oid}
-    return result
 
-def feishu_msg(sender, text, mentions=None):
-    """模拟飞书收到一条消息，返回 Agent 回复"""
-    # 替换 @_user_X → @用户名（模拟 main.py 的预处理）
-    clean = text
+def reset_db():
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    for table in ("tasks", "roles", "task_events"):
+        conn.execute(f"DELETE FROM {table}")
+    conn.commit()
+    conn.close()
+    clear_history(CHAT)
+    add_role(USERS["小海"], "creator")
+
+
+def make_mentions(*names):
+    """Build a Feishu-like mentions map.
+
+    In a real Feishu group message, the first mention is usually the bot:
+    @_user_1 -> CommuFlow
+    @_user_2 -> assignee
+    """
+    mapping = {"@_user_1": {"name": BOT_NAME, "open_id": BOT_OPENID}}
+    for index, name in enumerate(names, 2):
+        mapping[f"@_user_{index}"] = {"name": name, "open_id": USERS[name]}
+    return mapping
+
+
+def normalize_message(text, mentions):
+    normalized = text
+    for key, info in mentions.items():
+        normalized = normalized.replace(key, f"@{info['name']}")
+    return normalized
+
+
+def send(actor, raw_text, expected, mentions=None):
+    mentions = mentions or {}
+    normalized = normalize_message(raw_text, mentions)
+    print("\n" + "." * 70)
+    print(f"发言人: {actor} ({USERS[actor]})")
+    print(f"飞书原文: {raw_text}")
     if mentions:
+        print("mentions:")
         for key, info in mentions.items():
-            clean = clean.replace(key, f"@{info['name']}")
-    return run_agent(sender, "oc_test_group", clean, mentions or {})
+            print(f"  {key} -> {info['name']} ({info['open_id']})")
+    print(f"归一化后: {normalized}")
+    print(f"预期行为: {expected}")
+    reply = run_agent(USERS[actor], CHAT, normalized, mentions)
+    print("CommuFlow 回复:")
+    print(reply)
+    return reply
 
-# ═══════════════════════════════════════════════════
-# 清理旧数据
-# ═══════════════════════════════════════════════════
-import sqlite3, os
-for db in ["data/commuflow.db", "data/memory.db"]:
-    if os.path.exists(db):
-        c = sqlite3.connect(db)
-        c.execute("DELETE FROM tasks" if "commuflow" in db else "DELETE FROM conversations")
-        c.commit()
-        c.close()
-clear_history("oc_test_group")
-init_db()
-logger.info("=== TEST DATA CLEARED ===")
+
+def must_contain(text, expected, label):
+    assert expected in text, f"{label}: expected {expected!r} in reply:\n{text}"
+
+
+def must_not_contain(text, unexpected, label):
+    assert unexpected not in text, f"{label}: unexpected {unexpected!r} in reply:\n{text}"
+
+
+def extract_task_id(reply):
+    match = re.search(r"T\d{3}", reply)
+    assert match, f"expected task id in reply:\n{reply}"
+    return match.group()
+
+
+def board(title):
+    print("\n" + "=" * 70)
+    print(title)
+    print("=" * 70)
+    rows = get_all_tasks()
+    if not rows:
+        print("(empty)")
+        return
+    print(f"{'ID':<6} {'Status':<12} {'Title':<22} {'Assignee':<14} {'Creator':<14} {'Due Date'}")
+    print("-" * 90)
+    for task in rows:
+        print(
+            f"T{task['id']:03d}  {task['status']:<12} "
+            f"{task['title']:<22} {task['assignee_openid'][:14]:<14} "
+            f"{task['creator_openid'][:14]:<14} {task['due_date']}"
+        )
+
+
+def create_fixture(title, assignee, creator, due_date):
+    result = json.loads(create_task.invoke({
+        "title": title,
+        "assignee_openid": USERS[assignee],
+        "creator_openid": USERS[creator],
+        "due_date": due_date,
+    }))
+    print(f"系统夹具: 创建 T{result['id']} {title} -> {assignee}, creator={creator}")
+    return f"T{result['id']}"
+
+
+reset_db()
 
 print("=" * 70)
-print("  CommuFlow 全流程测试")
-print("  模拟飞书消息 JSON 格式，走完整 LangGraph pipeline")
+print("CommuFlow Full Pipeline Acceptance Test")
 print("=" * 70)
+print("初始角色:")
+print("- 小海: creator role, can create and verify tasks")
+print("- 张三/李四/王五: normal Feishu users, can only operate assigned tasks")
+print("- 路人: no task permissions")
+board("初始任务看板")
 
-# ═══════════════════════════════════════════════════
-# 场景 1: 单人任务闭环
-# ═══════════════════════════════════════════════════
-print("\n" + "─" * 70)
-print("  场景 1: 单人任务闭环（小海 → 张三 → 小海验收）")
-print("─" * 70)
 
-m = make_mentions(("张三", 张三))
+print("\n\n### 场景 1: 权限入口检查 - 非创建者不能派任务")
+reply = send(
+    "路人",
+    "@_user_1 请@_user_2 2026-06-19前完成竞品分析报告",
+    "应拒绝创建，因为路人不是 creator/admin",
+    make_mentions("张三"),
+)
+must_contain(reply, "只有管理员或任务创建白名单成员可以创建任务", "non-creator create denied")
+board("场景 1 后任务看板，应仍为空")
 
-# 1a: 创建任务
-print("\n[1a] 小海: @CommuFlow 请@张三 下周五18:00前完成竞品分析报告")
-r = feishu_msg(小海, "@_user_1 请@_user_1 下周五18:00前完成竞品分析报告", m)
-print(f"      CommuFlow: {r}")
 
-# 提取 T00X
-tid_match = re.search(r"T\d{3}", r)
-task1_id = tid_match.group() if tid_match else "???"
-print(f"      → 任务ID: {task1_id}")
+print("\n\n### 场景 2: 标准闭环 - 创建、查询、详情、完成、验收")
+reply = send(
+    "小海",
+    "@_user_1 请@_user_2 2026-06-19前完成竞品分析报告",
+    "应创建任务给张三，并返回任务 ID",
+    make_mentions("张三"),
+)
+task_report = extract_task_id(reply)
+must_contain(reply, "已创建", "create task")
+assert get_task(int(task_report[1:]))["assignee_openid"] == USERS["张三"], "task must be assigned to 张三, not bot"
+board("创建任务后")
 
-# 1b: 张三查任务
-print(f"\n[1b] 张三: @CommuFlow 我的任务有哪些")
-r = feishu_msg(张三, "我的任务有哪些")
-print(f"      CommuFlow: {r}")
+reply = send("张三", "我的任务有哪些", "张三应只看到分配给自己的任务")
+must_contain(reply, task_report, "assignee query")
 
-# 1c: 张三完成任务
-print(f"\n[1c] 张三: @CommuFlow {task1_id} 已完成")
-r = feishu_msg(张三, f"{task1_id} 已完成")
-print(f"      CommuFlow: {r}")
+reply = send("张三", f"{task_report} 任务是什么", "责任人可查看任务详情")
+must_contain(reply, "状态:", "detail by assignee")
+must_contain(reply, "竞品分析报告", "detail title")
 
-# 1d: 小海验收
-print(f"\n[1d] 小海: @CommuFlow {task1_id} 验收通过")
-r = feishu_msg(小海, f"{task1_id} 验收通过")
-print(f"      CommuFlow: {r}")
+reply = send("张三", f"{task_report} 已完成", "责任人可标记完成，任务进入待验收")
+must_contain(reply, "待验收", "complete task")
+board("张三完成任务后")
 
-# ═══════════════════════════════════════════════════
-# 场景 2: 多人编排（一人分配多任务）
-# ═══════════════════════════════════════════════════
-print("\n" + "─" * 70)
-print("  场景 2: 多人编排（小海同时给张三、李四分任务）")
-print("─" * 70)
+reply = send("小海", f"{task_report} 验收通过", "创建者可验收任务，任务闭环完成")
+must_contain(reply, "闭环完成", "verify task")
+board("小海验收后")
 
-m2 = make_mentions(("张三", 张三), ("李四", 李四))
 
-# 2a: 给张三派活
-print("\n[2a] 小海: @CommuFlow 请@张三 2026-06-20前完成后端API开发")
-r = feishu_msg(小海, "@_user_1 请@_user_1 2026-06-20前完成后端API开发", m2)
-print(f"      CommuFlow: {r}")
-tid2 = re.search(r"T\d{3}", r).group() if re.search(r"T\d{3}", r) else "???"
+print("\n\n### 场景 3: 多人任务隔离和越权拦截")
+mentions = make_mentions("张三", "李四")
+reply = send(
+    "小海",
+    "@_user_1 请@_user_2 2026-06-20前完成后端API开发",
+    "应创建张三的后端任务",
+    mentions,
+)
+task_api = extract_task_id(reply)
+assert get_task(int(task_api[1:]))["assignee_openid"] == USERS["张三"], "backend task must be assigned to 张三"
 
-# 2b: 给李四派活
-print("\n[2b] 小海: @CommuFlow 请@李四 2026-06-18前完成UI设计稿")
-r = feishu_msg(小海, "@_user_2 请@_user_2 2026-06-18前完成UI设计稿", m2)
-print(f"      CommuFlow: {r}")
-tid3 = re.search(r"T\d{3}", r).group() if re.search(r"T\d{3}", r) else "???"
+reply = send(
+    "小海",
+    "@_user_1 请@_user_3 2026-06-18前完成UI设计稿",
+    "应创建李四的 UI 任务",
+    mentions,
+)
+task_ui = extract_task_id(reply)
+assert get_task(int(task_ui[1:]))["assignee_openid"] == USERS["李四"], "UI task must be assigned to 李四"
+board("多人任务创建后")
 
-print(f"\n      → 创建了 {tid2} 和 {tid3}")
+reply = send("张三", "我的任务有哪些", "张三只能看到自己的后端任务")
+must_contain(reply, task_api, "zhangsan sees own task")
+must_not_contain(reply, task_ui, "zhangsan cannot see lisi task")
 
-# 2c: 张三查自己的任务
-print(f"\n[2c] 张三: @CommuFlow 我的任务有哪些")
-r = feishu_msg(张三, "我的任务有哪些")
-print(f"      CommuFlow: {r}")
+reply = send("李四", "我的任务有哪些", "李四只能看到自己的 UI 任务")
+must_contain(reply, task_ui, "lisi sees own task")
+must_not_contain(reply, task_api, "lisi cannot see zhangsan task")
 
-# 2d: 李四查自己的任务
-print(f"\n[2d] 李四: @CommuFlow 我的任务有哪些")
-r = feishu_msg(李四, "我的任务有哪些")
-print(f"      CommuFlow: {r}")
+reply = send("路人", f"{task_api} 已完成", "路人不是责任人，应无法完成张三任务")
+must_contain(reply, "只有任务责任人可以标记完成", "unauthorized complete")
 
-# 2e: 张三完成任务
-print(f"\n[2e] 张三: @CommuFlow 后端API开发 已完成")
-r = feishu_msg(张三, "后端API开发 已完成")
-print(f"      CommuFlow: {r}")
+reply = send("路人", f"{task_api} 验收通过", "路人不是创建者，应无法验收")
+must_contain(reply, "只有任务创建者或管理员", "unauthorized verify")
 
-# 2f: 李四完成任务
-print(f"\n[2f] 李四: @CommuFlow UI设计稿 已完成")
-r = feishu_msg(李四, "UI设计稿 已完成")
-print(f"      CommuFlow: {r}")
+reply = send("路人", f"{task_api} 任务是什么", "路人不是相关人，应无法查看详情")
+must_contain(reply, "没有权限", "unauthorized detail")
 
-# 2g: 小海逐个验收
-print(f"\n[2g] 小海: @CommuFlow {tid2} 验收通过")
-r = feishu_msg(小海, f"{tid2} 验收通过")
-print(f"      CommuFlow: {r}")
 
-print(f"\n[2h] 小海: @CommuFlow 验收通过  (自动匹配下一个)")
-r = feishu_msg(小海, "验收通过")
-print(f"      CommuFlow: {r}")
+print("\n\n### 场景 4: 任务详情消歧 - 同名/相似任务必须让用户选 ID")
+fixture_1 = create_fixture("竞品分析报告-二期", "张三", "小海", "2026-06-21")
+fixture_2 = create_fixture("竞品分析报告-三期", "张三", "小海", "2026-06-22")
+board("制造两个相似任务后")
 
-# ═══════════════════════════════════════════════════
-# 场景 3: 知识问答
-# ═══════════════════════════════════════════════════
-print("\n" + "─" * 70)
-print("  场景 3: 知识库问答（RAG）")
-print("─" * 70)
+reply = send(
+    "小海",
+    "竞品分析报告 任务是什么",
+    "应进入 TaskAgent，并返回多个候选任务，不应走知识库",
+)
+must_contain(reply, "匹配到多个任务", "ambiguous detail")
+must_contain(reply, fixture_1, "ambiguous candidate 1")
+must_contain(reply, fixture_2, "ambiguous candidate 2")
 
-print("\n[3a] 小海: @CommuFlow 紧急订单变更流程是什么？")
-r = feishu_msg(小海, "紧急订单变更流程是什么？")
-print(f"      CommuFlow: {r}")
 
-print("\n[3b] 小海: @CommuFlow 采购标准交期是多久？")
-r = feishu_msg(小海, "采购标准交期是多久？")
-print(f"      CommuFlow: {r}")
+print("\n\n### 场景 5: 知识问答 - SOP/RAG")
+reply = send("小海", "紧急订单变更流程是什么？", "应进入 KnowledgeAgent，检索 SOP 并回答")
+assert "未找到" not in reply, f"knowledge query should find SOP:\n{reply}"
+must_contain(reply, "订单", "knowledge answer")
 
-# ═══════════════════════════════════════════════════
-# 场景 4: 会议纪要
-# ═══════════════════════════════════════════════════
-print("\n" + "─" * 70)
-print("  场景 4: 会议纪要生成")
-print("─" * 70)
 
-meeting_text = """会议记录：
-今天下午2点我们开了Q2产品评审会。参会人员：小海、张三、李四、王五。
-讨论了三个议题：1) 竞品分析报告需要增加市场数据对比；2) 后端API需要支持批量导入；
-3) UI设计稿配色需要调整为企业蓝色系。
-结论：竞品报告由张三6月20日前补充数据，后端API由张三6月25日前开发完成，
-UI配色由李四6月15日前调整。测试由王五负责6月30日完成集成测试。"""
+print("\n\n### 场景 6: 会议纪要")
+meeting = (
+    "帮我整理会议纪要：今天下午开了Q2产品评审会。参会人员：小海、张三、李四。"
+    "讨论了竞品报告、后端API和UI设计。结论：张三6月20日前补充竞品数据，"
+    "李四6月18日前完成UI设计稿。"
+)
+reply = send("小海", meeting, "应进入 MeetingAgent，生成结构化会议纪要")
+must_contain(reply, "会议纪要", "meeting minutes")
+must_contain(reply, "待办", "meeting action items")
 
-print(f"\n[4a] 小海: @CommuFlow 帮我整理会议纪要：\n{meeting_text[:60]}...")
-r = feishu_msg(小海, f"帮我整理会议纪要：\n{meeting_text}")
-print(f"      CommuFlow:\n{r}")
 
-# ═══════════════════════════════════════════════════
-# 场景 5: 聊天兜底
-# ═══════════════════════════════════════════════════
-print("\n" + "─" * 70)
-print("  场景 5: 闲聊兜底")
-print("─" * 70)
+print("\n\n### 场景 7: 闲聊兜底")
+reply = send("小海", "你好", "应进入 Chat fallback，返回能力说明")
+must_contain(reply, "CommuFlow", "chat fallback")
 
-print("\n[5a] 用户: @CommuFlow 你好")
-r = feishu_msg(小海, "你好")
-print(f"      CommuFlow: {r}")
-
-# ═══════════════════════════════════════════════════
-# 看板输出
-# ═══════════════════════════════════════════════════
-print("\n" + "=" * 70)
-print("  最终任务看板")
-print("=" * 70)
-
-print(f"\n{'ID':<6} {'Status':<12} {'Title':<20} {'Assignee':<15} {'Due Date'}")
-print("-" * 70)
-for t in get_all_tasks():
-    status_map = {"pending":"待处理","verified":"待验收","completed":"已完成","in_progress":"进行中"}
-    st = status_map.get(t["status"], t["status"])
-    print(f"T{t['id']:<04d} {st:<12} {t['title']:<20} {t['assignee_openid'][:15]:<15} {t['due_date']}")
-
-print(f"\n共 {len(get_all_tasks())} 个任务")
-print("=" * 70)
-print("  全流程测试完成！")
-print("=" * 70)
+board("最终任务看板")
+print("\nFULL PIPELINE ACCEPTANCE TESTS PASSED")

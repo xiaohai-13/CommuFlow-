@@ -5,7 +5,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 from agent.graph import run_agent
 from agent.memory import clear_history
-from utils.task_manager import init_db, get_all_tasks
+from utils.task_manager import init_db, get_all_tasks, add_role
 
 init_db()
 CHAT = "oc_test_multi"
@@ -14,6 +14,7 @@ clear_history(CHAT)
 CREATOR = "ou_creator"
 ASSIGNEE = "ou_assignee"
 MENTIONS = {"@_user_2": {"name": "userB", "open_id": ASSIGNEE}}
+add_role(CREATOR, "creator")
 
 def send(text, user, mentions=None):
     return run_agent(user, CHAT, text, mentions or {})

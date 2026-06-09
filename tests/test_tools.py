@@ -4,15 +4,18 @@ sys.path.insert(0, ".")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 from utils.task_manager import init_db
+from utils.task_manager import add_role
 from agent.tools import create_task, complete_task, verify_task, query_my_tasks, search_sop
 
 init_db()
 
 ASSIGNEE = "ou_assignee_001"
 CREATOR = "ou_creator_001"
+add_role(CREATOR, "creator")
 
 print("=== L0-1: create_task ===")
 tid = create_task.invoke({"title": "竞品分析", "assignee_openid": ASSIGNEE, "creator_openid": CREATOR, "due_date": "2026-06-19"})
+tid = __import__("json").loads(tid)["id"]
 assert tid.isdigit(), f"FAIL: expected numeric ID, got {tid}"
 print(f"  created: T{tid.zfill(3)}")
 
@@ -23,6 +26,7 @@ print(f"  found: {result[:80]}")
 
 print("=== L0-3: complete_task ===")
 tid2 = complete_task.invoke({"user_openid": ASSIGNEE, "task_id_or_title": tid})
+tid2 = __import__("json").loads(tid2)["id"]
 assert tid2 == tid, f"FAIL: returned {tid2} != {tid}"
 from utils.task_manager import get_task
 t = get_task(int(tid))
@@ -31,6 +35,7 @@ print(f"  status: verified")
 
 print("=== L0-4: verify_task ===")
 tid3 = verify_task.invoke({"user_openid": CREATOR, "task_id_or_title": "T" + tid.zfill(3)})
+tid3 = __import__("json").loads(tid3)["id"]
 assert tid3 == tid, f"FAIL: returned {tid3} != {tid}"
 t = get_task(int(tid))
 assert t["status"] == "completed", f"FAIL: status={t['status']}"
@@ -39,8 +44,10 @@ print(f"  status: completed")
 print("=== L0-5: verify_task auto-find ===")
 # Create another task, complete it, then verify without ID
 tid4 = create_task.invoke({"title": "报告", "assignee_openid": ASSIGNEE, "creator_openid": CREATOR, "due_date": "2026-06-20"})
+tid4 = __import__("json").loads(tid4)["id"]
 complete_task.invoke({"user_openid": ASSIGNEE, "task_id_or_title": tid4})
 tid5 = verify_task.invoke({"user_openid": CREATOR, "task_id_or_title": ""})
+tid5 = __import__("json").loads(tid5)["id"]
 assert tid5 == tid4, f"FAIL: auto-find returned {tid5} != {tid4}"
 print(f"  auto-find: T{tid5.zfill(3)}")
 

@@ -5,8 +5,8 @@ from typing import Literal
 
 class TaskAction(BaseModel):
     """提取出来的单步任务操作"""
-    action: Literal["create", "complete", "verify", "query", "clarify", "chat"] = Field(
-        description="操作: create=分配任务, complete=标记完成, verify=验收, query=查进度, clarify=信息不全要反问, chat=闲聊"
+    action: Literal["create", "complete", "verify", "query", "detail", "clarify", "chat"] = Field(
+        description="操作: create=分配任务, complete=标记完成, verify=验收, query=查进度, detail=任务详情, clarify=信息不全要反问, chat=闲聊"
     )
     task_title: str = Field(default="", description="任务标题，如'竞品分析报告'")
     task_id: str = Field(default="", description="任务编号，如 T018")
