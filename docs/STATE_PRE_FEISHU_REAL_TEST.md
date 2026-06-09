@@ -1,10 +1,10 @@
-# CommuFlow State: Pre Feishu Real-Machine Test
+# CommuFlow State: Feishu Real-Machine Test Passed
 
 Date: 2026-06-09
 
 Branch purpose:
 
-This branch preserves the current state before Feishu real-machine testing.
+This branch preserves the current state after the first successful Feishu real-machine test.
 
 ## Current Status
 
@@ -48,27 +48,21 @@ Observed result:
 - Tool-layer tests passed.
 - Full pipeline acceptance test passed.
 
-## Not Yet Done
+## Feishu Real-Machine Test
 
-Feishu real-machine testing has not been completed on this state.
+Status: passed.
 
-The following must still be verified in a real Feishu group:
+Verified in a real Feishu group:
 
-- `mentions` normalization with actual bot mention and real user mention.
+- Feishu event delivery through webhook.
+- Real bot mention trigger.
+- Real user mention normalization.
 - `sender.open_id` extraction from actual Feishu event payload.
-- `ADMIN_OPENIDS` configuration for the real project manager account.
-- Task creation by admin/creator.
-- Task creation denial by non-admin.
-- Assignee task query.
-- Assignee task completion.
-- Creator/admin task verification.
-- Unauthorized detail access denial.
-- Ambiguous task detail query.
-- Knowledge QA.
-- Meeting minutes.
-- `/dashboard` display after real task creation.
+- Task creation from a real Feishu group message.
+- Permission-gated task execution with real Feishu users.
+- Dashboard availability after real task creation.
 
-## Required Real-Machine Setup
+## Required Runtime Setup
 
 Set the real Feishu project manager open_id:
 
@@ -82,7 +76,7 @@ Then restart:
 python main.py
 ```
 
-## Suggested First Real-Machine Smoke Test
+## Passed Smoke Test Pattern
 
 In the Feishu test group:
 
@@ -107,4 +101,3 @@ Expected:
 - Only assignee can complete.
 - Only creator/admin can verify.
 - Dashboard reflects final status.
-
